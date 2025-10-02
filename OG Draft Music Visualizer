@@ -1,0 +1,502 @@
+import os
+import vlc  # Import python-vlc
+import matplotlib.pyplot as plt
+import numpy as np
+from collections import Counter
+from matplotlib import cm
+import tkinter as tk
+from tkinter import ttk, filedialog
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import librosa
+import threading
+
+#from statAnalysis.musicVisualizer import colormap_var
+
+# Set VLC library path on macOS (adjust the path if necessary)
+os.environ['PYTHON_VLC_LIB_PATH'] = '/Applications/VLC.app/Contents/MacOS/lib/libvlc.dylib'
+
+# --- Define the custom 64-codon angular mapping ---
+# Each codon is spaced 5.625° apart (360/64)
+codon_data = {
+    1:  {"angle_degrees": 0.0,      "note": "C"},
+    2:  {"angle_degrees": 5.625,    "note": "C#"},
+    3:  {"angle_degrees": 11.25,    "note": "D"},
+    4:  {"angle_degrees": 16.875,   "note": "D#"},
+    5:  {"angle_degrees": 22.5,     "note": "E"},
+    6:  {"angle_degrees": 28.125,   "note": "F"},
+    7:  {"angle_degrees": 33.75,    "note": "F#"},
+    8:  {"angle_degrees": 39.375,   "note": "G"},
+    9:  {"angle_degrees": 45.0,     "note": "G#"},
+    10: {"angle_degrees": 50.625,   "note": "A"},
+    11: {"angle_degrees": 56.25,    "note": "A#"},
+    12: {"angle_degrees": 61.875,   "note": "B"},
+    13: {"angle_degrees": 67.5,     "note": "C"},
+    14: {"angle_degrees": 73.125,   "note": "C#"},
+    15: {"angle_degrees": 78.75,    "note": "D"},
+    16: {"angle_degrees": 84.375,   "note": "D#"},
+    17: {"angle_degrees": 90.0,     "note": "E"},
+    18: {"angle_degrees": 95.625,   "note": "F"},
+    19: {"angle_degrees": 101.25,   "note": "F#"},
+    20: {"angle_degrees": 106.875,  "note": "G"},
+    21: {"angle_degrees": 112.5,    "note": "G#"},
+    22: {"angle_degrees": 118.125,  "note": "A"},
+    23: {"angle_degrees": 123.75,   "note": "A#"},
+    24: {"angle_degrees": 129.375,  "note": "B"},
+    25: {"angle_degrees": 135.0,    "note": "C"},
+    26: {"angle_degrees": 140.625,  "note": "C#"},
+    27: {"angle_degrees": 146.25,   "note": "D"},
+    28: {"angle_degrees": 151.875,  "note": "D#"},
+    29: {"angle_degrees": 157.5,    "note": "E"},
+    30: {"angle_degrees": 163.125,  "note": "F"},
+    31: {"angle_degrees": 168.75,   "note": "F#"},
+    32: {"angle_degrees": 174.375,  "note": "G"},
+    33: {"angle_degrees": 180.0,    "note": "G#"},
+    34: {"angle_degrees": 185.625,  "note": "A"},
+    35: {"angle_degrees": 191.25,   "note": "A#"},
+    36: {"angle_degrees": 196.875,  "note": "B"},
+    37: {"angle_degrees": 202.5,    "note": "C"},
+    38: {"angle_degrees": 208.125,  "note": "C#"},
+    39: {"angle_degrees": 213.75,   "note": "D"},
+    40: {"angle_degrees": 219.375,  "note": "D#"},
+    41: {"angle_degrees": 225.0,    "note": "E"},
+    42: {"angle_degrees": 230.625,  "note": "F"},
+    43: {"angle_degrees": 236.25,   "note": "F#"},
+    44: {"angle_degrees": 241.875,  "note": "G"},
+    45: {"angle_degrees": 247.5,    "note": "G#"},
+    46: {"angle_degrees": 253.125,  "note": "A"},
+    47: {"angle_degrees": 258.75,   "note": "A#"},
+    48: {"angle_degrees": 264.375,  "note": "B"},
+    49: {"angle_degrees": 270.0,    "note": "C"},
+    50: {"angle_degrees": 275.625,  "note": "C#"},
+    51: {"angle_degrees": 281.25,   "note": "D"},
+    52: {"angle_degrees": 286.875,  "note": "D#"},
+    53: {"angle_degrees": 292.5,    "note": "E"},
+    54: {"angle_degrees": 298.125,  "note": "F"},
+    55: {"angle_degrees": 303.75,   "note": "F#"},
+    56: {"angle_degrees": 309.375,  "note": "G"},
+    57: {"angle_degrees": 315.0,    "note": "G#"},
+    58: {"angle_degrees": 320.625,  "note": "A"},
+    59: {"angle_degrees": 326.25,   "note": "A#"},
+    60: {"angle_degrees": 331.875,  "note": "B"},
+    61: {"angle_degrees": 337.5,    "note": "C"},
+    62: {"angle_degrees": 343.125,  "note": "C#"},
+    63: {"angle_degrees": 348.75,   "note": "D"},
+    64: {"angle_degrees": 354.375,  "note": "B"}  # Explicitly set codon 64 to "B"
+}
+
+# --- Codon to Field Type Classification (SEE Emotional Resonance Fields) ---
+codon_field_type = {
+    # 🔵 Integration
+    **{i: 'integration' for i in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+                                  25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36,
+                                  49, 50, 51, 52, 53, 54, 55, 56]},
+    # 🔴 Compression
+    **{i: 'compression' for i in [13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+                                  37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48]},
+    # 🟡 Emergence
+    **{i: 'emergence' for i in [57, 58, 59, 60]},
+    # 🟢 Balance
+    **{i: 'balance' for i in [61, 62, 63, 64]}
+}
+
+# Define the colors for each field type
+field_type_colors = {
+    'integration': '#1f77b4',   # Blue
+    'compression': '#d62728',   # Red
+    'emergence':   '#ffbf00',   # Yellow
+    'balance':     '#2ca02c'    # Green
+}
+
+# Generate a dictionary mapping note names to all their associated codon numbers.
+note_to_codons = {}
+for codon, data in codon_data.items():
+    note = data["note"]
+    note_to_codons.setdefault(note, []).append(codon)
+
+# --- Define Codon Wheel Variables ---
+codon_numbers = list(range(1, 65))
+num_codons = 64
+# Compute angles in radians for each codon based on codon_data.
+angles = np.array([np.deg2rad(codon_data[i]["angle_degrees"]) for i in codon_numbers])
+# Map each codon to its angle in radians.
+codon_positions = {i: np.deg2rad(codon_data[i]["angle_degrees"]) for i in codon_numbers}
+
+song_notes_over_time = []  # Preloaded list to store codon numbers for each time segment
+harmonic_trail_memory = set()
+glyph_memory = set()
+total_time = 0             # Total duration of the song
+audio_file_path = ""       # Path to the loaded audio file
+media_player = None        # VLC media player instance
+audio_playing = False      # Flag to indicate if audio is playing
+is_running = True         # Flag to indicate if the application is running
+resonance_glyph_points = []  # Stores triangle vertex data over time
+
+# --- Harmonic Helper: Get harmonic codons ~120° apart
+def get_harmonic_codons(codon):
+    spacing = 21  # Codon steps per ~120°
+    return [
+        ((codon - 1 + spacing) % 64) + 1,
+        ((codon - 1 + 2 * spacing) % 64) + 1
+    ]
+
+# --- Audio Processing ---
+def process_audio(file_path):
+    global song_notes_over_time, total_time
+    y, sr = librosa.load(file_path)
+    total_time = librosa.get_duration(y=y, sr=sr)
+    time_slider.config(to=total_time, resolution=0.1)
+    time_slider.set(0)
+
+    hop_length = int(sr * 0.1)  # 0.1 seconds hop length
+    frames = range(0, len(y), hop_length)
+    times = librosa.frames_to_time(frames, sr=sr)
+
+    pitches, magnitudes = librosa.piptrack(y=y, sr=sr, hop_length=hop_length)
+    song_notes_over_time = []
+    for i in range(len(times)):
+        magnitudes_frame = magnitudes[:, i]
+        pitches_frame = pitches[:, i]
+        if len(magnitudes_frame) > 0:
+            max_magnitude = np.max(magnitudes_frame)
+            threshold = max_magnitude * 0.1  # Keep top 10% magnitudes
+            idx = magnitudes_frame > threshold
+            if np.any(idx):
+                pitch = pitches_frame[idx][np.argmax(magnitudes_frame[idx])]
+                if pitch > 0:
+                    midi = librosa.hz_to_midi(pitch)
+                    note_name = librosa.midi_to_note(midi, octave=False)
+                    note_name = note_name.replace('♯', '#').replace('♭', 'b')
+                    note_base = note_name[:-1] if note_name[-1].isdigit() else note_name
+                    enharmonic_map = {'C#': 'C#', 'Db': 'C#',
+                                      'D#': 'D#', 'Eb': 'D#',
+                                      'F#': 'F#', 'Gb': 'F#',
+                                      'G#': 'G#', 'Ab': 'G#',
+                                      'A#': 'A#', 'Bb': 'A#'}
+                    note_mapped = enharmonic_map.get(note_base, note_base)
+                    if note_mapped in note_to_codons:
+                        # Choose the first codon for the detected note.
+                        codon = note_to_codons[note_mapped][0]
+                        song_notes_over_time.append(codon)
+                        continue
+        song_notes_over_time.append(None)  # Append None if no codon is found
+
+# --- MP3 Loading ---
+def load_mp3():
+    global audio_file_path, media_player
+    file_path = filedialog.askopenfilename(filetypes=[("MP3 files", "*.mp3")])
+    if file_path:
+        if media_player:
+            media_player.stop()
+        audio_file_path = file_path
+        media_player = vlc.MediaPlayer(file_path)
+        threading.Thread(target=process_audio, args=(file_path,)).start()
+
+# --- Plot Update ---
+def update_plot(*args):
+    global total_time
+    if total_time == 0:
+        print("Error: total_time is zero. Cannot update plot.")
+        return
+
+    current_time = time_slider.get()
+    idx = int((current_time / total_time) * len(song_notes_over_time))
+    active_codons = [codon for codon in song_notes_over_time[:idx] if codon is not None]
+
+    ax.clear()
+    ax.set_theta_zero_location('N')
+    ax.set_theta_direction(-1)
+    ax.set_yticklabels([])
+    ax.set_xticks([])
+
+    cmap_name = colormap_var.get()
+    invert = invert_var.get()
+    cmap = cm.get_cmap(cmap_name)
+    if invert:
+        cmap = cm.get_cmap(cmap_name + "_r")
+
+    codon_counts = Counter(active_codons)
+    max_count = max(codon_counts.values()) if codon_counts else 1
+    codon_intensities = {codon: count / max_count for codon, count in codon_counts.items()}
+
+    widths = [2 * np.pi / num_codons] * num_codons
+    radii = [1] * num_codons
+    colors = []
+    for codon in codon_numbers:
+        intensity = codon_intensities.get(codon, 0.1)
+        color = cmap(intensity)
+        colors.append(color)
+
+    # Draw colored bars with field type borders
+    for i, codon in enumerate(codon_numbers):
+        angle = angles[i]
+        width = widths[i]
+        radius = radii[i]
+
+        intensity = codon_intensities.get(codon, 0.1)
+        base_color = cmap(intensity)
+
+        field_type = codon_field_type.get(codon)
+        edge_color = field_type_colors.get(field_type, 'black')
+
+        ax.bar([angle], [radius], width=width, bottom=0.0, align='edge',
+               color=base_color, edgecolor=edge_color, linewidth=2)
+
+    # Add codon labels using the note names from codon_data.
+    for angle, codon in zip(angles, codon_numbers):
+        label = codon_data[codon]["note"]
+        ax.text(angle + widths[0] / 2, 1.05, label,
+                rotation=np.degrees(angle + widths[0] / 2) - 90,
+                ha='center', va='center')
+
+    # Draw connecting lines between consecutive active codons.
+    # Draw connecting lines using the field type color of the origin codon (codon1)
+    # Draw connecting lines between consecutive active codons using spectral color of origin codon
+    for i in range(len(active_codons) - 1):
+        codon1 = active_codons[i]
+        codon2 = active_codons[i + 1]
+        angle1 = codon_positions.get(codon1)
+        angle2 = codon_positions.get(codon2)
+
+        # Use the normalized intensity value to get the spectral gradient color
+        intensity = codon_intensities.get(codon1, 0.1)
+        spectral_color = cmap(intensity)
+
+        if angle1 is not None and angle2 is not None:
+            ax.plot([angle1, angle2], [0.5, 0.5],
+                    color=spectral_color, linewidth=0.8, zorder=5)
+
+    # --- Feature: Add geometric line linking for codon harmonic trios ---
+    #def get_harmonic_codons(codon):
+        # Each harmonic codon is ~120° apart. For 64 codons, that is roughly 21 codon steps.
+        #spacing = 21  # Rounded for integer codon jumps
+        #return [
+            #((codon - 1 + spacing) % 64) + 1,
+            #((codon - 1 + 2 * spacing) % 64) + 1
+        #]
+    for codon in active_codons:
+        harmonic_codons = get_harmonic_codons(codon)
+        angle1 = codon_positions.get(codon)
+        for harmonic in harmonic_codons:
+            angle2 = codon_positions.get(harmonic)
+            if angle1 is not None and angle2 is not None:
+                ax.plot([angle1, angle2], [0.7, 0.7],  # Draw at mid-radius
+                        color='yellow', linewidth=0.5, linestyle='dotted', alpha=0.6)
+
+    ax.set_title(f"Song Visualization at {current_time:.1f}s")
+    # Determine which codons to show based on trail memory
+    if trail_memory_var.get():
+        harmonic_trail_memory.update(active_codons)
+        current_codons = harmonic_trail_memory
+    else:
+        harmonic_trail_memory.clear()
+        current_codons = active_codons
+        # Refractive Harmonic Trail Triangle Lines
+        drawn_harmonic_pairs = set()  # prevent double drawing
+
+        for codon in current_codons:
+            harmonic_codons = get_harmonic_codons(codon)
+            angle1 = codon_positions.get(codon)
+            intensity = codon_intensities.get(codon, 0.1)
+            gradient_color = cmap(intensity)
+
+            for harmonic in harmonic_codons:
+                if (codon, harmonic) in drawn_harmonic_pairs or (harmonic, codon) in drawn_harmonic_pairs:
+                    continue
+                angle2 = codon_positions.get(harmonic)
+                if angle1 is not None and angle2 is not None:
+                    ax.plot([angle1, angle2], [0.65, 0.65],
+                            color=gradient_color, linewidth=0.6, linestyle='dashed', alpha=0.9)
+                    drawn_harmonic_pairs.add((codon, harmonic))
+    # --- Resonance Wedge Overlay: Harmonic Triangle Glyphs ---
+    if show_resonance_wedge_var.get():
+        spacing = 21  # ~120° apart
+        wedge_size = 64 // 6  # 10 or 11 codons per wedge
+
+        for codon in active_codons:
+            harmonic_codons = [
+                ((codon - 1 + spacing) % 64) + 1,
+                ((codon - 1 + 2 * spacing) % 64) + 1
+            ]
+
+            wedge_id = (codon - 1) // wedge_size
+            harmonic_wedge_ids = [((h - 1) // wedge_size) for h in harmonic_codons]
+
+            if all(w == wedge_id for w in harmonic_wedge_ids):
+                angle_a = codon_positions.get(codon)
+                angle_b = codon_positions.get(harmonic_codons[0])
+                angle_c = codon_positions.get(harmonic_codons[1])
+                if angle_a and angle_b and angle_c:
+                    intensity = codon_intensities.get(codon, 0.1)
+                    tri_color = cmap(intensity)
+
+                    ax.plot([angle_a, angle_b], [0.9, 0.9], color=tri_color, alpha=0.9, linewidth=0.6)
+                    ax.plot([angle_b, angle_c], [0.9, 0.9], color=tri_color, alpha=0.9, linewidth=0.6)
+                    ax.plot([angle_c, angle_a], [0.9, 0.9], color=tri_color, alpha=0.9, linewidth=0.6)
+    # --- Resonance Glyph Geometry: Triangle Trail Memory ---
+    ax2.clear()
+
+    if glyph_window_var.get():
+        if glyph_window_var.get():
+            ax2.set_title("Resonance Glyph Window")
+            ax2.set_facecolor("black")
+            ax2.set_xticks([])
+            ax2.set_yticks([])
+            ax2.set_xlim(-1.2, 1.2)
+            ax2.set_ylim(-1.2, 1.2)
+
+            # Update glyph memory or clear depending on the toggle
+            if trail_memory_var.get():
+                glyph_memory.update(active_codons)
+                draw_resonance_glyph_window(glyph_memory)
+            else:
+                glyph_memory.clear()
+                draw_resonance_glyph_window(active_codons)
+        #draw_resonance_glyph_window(active_codons)
+        ax2.set_title("Resonance Glyph Window")
+        ax2.set_facecolor("black")
+        ax2.set_xticks([])
+        ax2.set_yticks([])
+        ax2.set_xlim(-1.2, 1.2)
+        ax2.set_ylim(-1.2, 1.2)
+
+        spacing = 21
+        for codon in active_codons:
+            harmonic_codons = [
+                ((codon - 1 + spacing) % 64) + 1,
+                ((codon - 1 + 2 * spacing) % 64) + 1
+            ]
+            glyph_angles = [codon_positions[codon]] + [codon_positions[h] for h in harmonic_codons]
+            if all(a is not None for a in glyph_angles):
+                # Convert polar angles to 2D cartesian
+                x1, y1 = np.cos(glyph_angles[0]), np.sin(glyph_angles[0])
+                x2, y2 = np.cos(glyph_angles[1]), np.sin(glyph_angles[1])
+                x3, y3 = np.cos(glyph_angles[2]), np.sin(glyph_angles[2])
+                triangle = [(x1, y1), (x2, y2), (x3, y3)]
+                resonance_glyph_points.append((triangle, cmap(codon_intensities.get(codon, 0.1))))
+
+        # Draw trails
+        for triangle, color in resonance_glyph_points:
+            xs, ys = zip(*triangle)
+            xs += (xs[0],)  # close triangle
+            ys += (ys[0],)
+            ax2.plot(xs, ys, color=color, linewidth=0.6, alpha=0.8)
+    canvas.draw()
+
+
+# --- Slider Update ---
+def update_slider():
+    if not is_running:
+        return
+    if media_player:
+        current_time_ms = media_player.get_time()
+        if current_time_ms >= 0:
+            current_time = current_time_ms / 1000.0
+            time_slider.set(current_time)
+    root.after(100, update_slider)
+
+def toggle_play():
+    global audio_playing
+    if play_var.get():
+        if media_player:
+            media_player.play()
+            audio_playing = True
+    else:
+        if media_player:
+            media_player.pause()
+            audio_playing = False
+def draw_resonance_glyph_window(codons):
+    ax2.set_facecolor('black')
+    ax2.set_theta_zero_location('N')
+    ax2.set_theta_direction(-1)
+    ax2.grid(color='gray', linestyle='dotted', alpha=0.3)
+    ax2.set_xticks(np.deg2rad([0, 45, 90, 135, 180, 225, 270, 315]))
+    ax2.set_yticklabels([])
+
+    triangle_alpha = 0.5
+    for codon in codons:
+        harmonics = get_harmonic_codons(codon)
+        vertices = [codon_positions.get(codon)] + [codon_positions.get(h) for h in harmonics]
+        if None not in vertices:
+            angles = vertices
+            radius = [0.6, 0.6, 0.6]
+            field_type = codon_field_type.get(codon)
+            color = field_type_colors.get(field_type, 'white')
+            ax2.fill(angles, radius, color=color, alpha=triangle_alpha, linewidth=0)
+# --- Application Exit ---
+def on_closing():
+    global media_player, audio_playing, is_running
+    is_running = False
+    if media_player:
+        media_player.stop()
+    root.destroy()
+
+# --- Tkinter GUI Setup ---
+root = tk.Tk()
+root.title("Interactive Song Visualization")
+root.protocol("WM_DELETE_WINDOW", on_closing)
+
+control_frame = ttk.Frame(root)
+control_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
+
+fig, (ax, ax2) = plt.subplots(
+    ncols=2,
+    figsize=(11, 6),
+    subplot_kw={'projection': 'polar'},
+    gridspec_kw={'width_ratios': [1.1, 1.2]}
+)
+canvas = FigureCanvasTkAgg(fig, master=root)
+canvas_widget = canvas.get_tk_widget()
+canvas_widget.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+
+
+load_button = ttk.Button(control_frame, text="Load MP3 File", command=load_mp3)
+load_button.pack(pady=5)
+
+play_var = tk.BooleanVar()
+play_check = ttk.Checkbutton(control_frame, text="Play Audio",
+                             variable=play_var, command=toggle_play)
+play_check.pack(pady=5)
+
+time_label = ttk.Label(control_frame, text="Time (s):")
+time_label.pack(pady=5)
+
+time_slider = tk.Scale(control_frame, from_=0, to=100, orient=tk.HORIZONTAL,
+                       length=200, command=update_plot)
+time_slider.pack()
+
+colormap_var = tk.StringVar(value='Spectral')
+colormap_label = ttk.Label(control_frame, text="Select Colormap:")
+colormap_label.pack(pady=5)
+colormap_options = sorted(m for m in plt.colormaps() if not m.endswith("_r"))
+colormap_menu = ttk.OptionMenu(control_frame, colormap_var, colormap_var.get(),
+                               *colormap_options, command=update_plot)
+colormap_menu.pack()
+
+invert_var = tk.BooleanVar(value=True)
+show_resonance_wedge_var = tk.BooleanVar(value=True)
+resonance_wedge_check = ttk.Checkbutton(
+    control_frame,
+    text="Show Resonance Wedge",
+    variable=show_resonance_wedge_var,
+    command=update_plot
+)
+resonance_wedge_check.pack(pady=5)
+invert_check = ttk.Checkbutton(control_frame, text="Invert Colormap",
+                               variable=invert_var, command=update_plot)
+invert_check.pack(pady=5)
+trail_memory_var = tk.BooleanVar(value=False)
+trail_check = ttk.Checkbutton(control_frame, text="Enable Trail Memory",
+                              variable=trail_memory_var, command=update_plot)
+trail_check.pack(pady=5)
+glyph_window_var = tk.BooleanVar(value=True)
+glyph_check = ttk.Checkbutton(control_frame, text="Show Resonance Glyph Window",
+                              variable=glyph_window_var, command=update_plot)
+glyph_check.pack(pady=5)
+
+exit_button = ttk.Button(control_frame, text="Exit", command=on_closing)
+exit_button.pack(pady=5)
+
+update_plot()
+root.after(100, update_slider)
+root.mainloop()
